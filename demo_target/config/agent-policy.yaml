@@ -1,0 +1,4 @@
+policy:
+  require_verified_evidence: false
+  destructive_actions: allowed_when_likely
+  escalation_on_missing_evidence: false

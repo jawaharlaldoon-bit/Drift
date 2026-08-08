@@ -1,0 +1,61 @@
+substitutions:
+  _REGION: us-central1
+  _REPOSITORY: drift
+  _GITHUB_OWNER: jawaharlaldoon-bit
+  _GITHUB_REPO: Drift
+  _GITHUB_BASE_BRANCH: main
+  _GITHUB_ALLOWED_PATHS: demo_target/prompts/system.md,demo_target/config/agent-policy.yaml
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - deploy/Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/app:$SHORT_SHA
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/app:$SHORT_SHA
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - drift-demo-target
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/app:$SHORT_SHA
+      - --region=${_REGION}
+      - --set-env-vars=SERVICE=demo
+      - --min-instances=0
+      - --max-instances=2
+      - --memory=512Mi
+      - --allow-unauthenticated
+      - --quiet
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        DEMO_URL="$$(gcloud run services describe drift-demo-target --region '${_REGION}' --format='value(status.url)')"
+        gcloud run deploy drift-api \
+          --image '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/app:$SHORT_SHA' \
+          --region '${_REGION}' \
+          --set-env-vars "SERVICE=api,DRIFT_ENV=production,DRIFT_DEMO_MODE=true,DRIFT_REASONING_BACKEND=gemini_adk,DRIFT_BUILD_REVISION=$SHORT_SHA,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=${_REGION},GEMINI_MODEL=gemini-3.5-flash,STATE_BACKEND=firestore,ACTION_MODE=live,DEMO_TARGET_URL=$$DEMO_URL,GITHUB_OWNER=${_GITHUB_OWNER},GITHUB_REPO=${_GITHUB_REPO},GITHUB_BASE_BRANCH=${_GITHUB_BASE_BRANCH},GITHUB_ALLOWED_PATHS=${_GITHUB_ALLOWED_PATHS},PUBSUB_TOPIC=drift-incidents" \
+          --update-secrets "GITHUB_TOKEN=drift-github-token:latest,SLACK_WEBHOOK_URL=drift-slack-webhook:latest,DEMO_TRIGGER_TOKEN=drift-demo-trigger:latest" \
+          --min-instances 0 \
+          --max-instances 3 \
+          --memory 1Gi \
+          --timeout 300 \
+          --allow-unauthenticated \
+          --quiet
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/app:$SHORT_SHA
+
+options:
+  logging: CLOUD_LOGGING_ONLY
